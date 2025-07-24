@@ -1,0 +1,19 @@
+# Development override for docker-compose
+# This file is automatically used when running docker-compose in development
+version: '3.8'
+
+services:
+  app:
+    profiles:
+      - production  # Only run in production profile
+
+  app-dev:
+    profiles: []  # Always run in development
+
+  celery-worker:
+    profiles:
+      - production  # Only run in production
+
+  nginx:
+    profiles:
+      - production  # Only run in production

@@ -1,8 +1,11 @@
 version: '3.8'
 
 services:
+  # Production app service
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
     environment:
@@ -14,34 +17,88 @@ services:
       - PORT=8000
     depends_on:
       - redis
-    volumes:
-      - ./backend:/app/backend
-      - ./dist:/app/static
-    command: >
-      sh -c "cd /app/backend && 
-             celery -A services.reminder_service.celery_app worker --loglevel=info &
-             uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    restart: unless-stopped
+    networks:
+      - study-guide-network
 
+  # Development app service
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"  # Frontend
+      - "8001:8000"  # Backend
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - VITE_API_URL=http://localhost:8001
+    depends_on:
+      - redis
+    volumes:
+      - ./src:/app/src
+      - ./backend:/app/backend
+      - /app/node_modules
+    networks:
+      - study-guide-network
+    profiles:
+      - dev
+
+  # Redis for reminders and caching
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
     volumes:
       - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - study-guide-network
 
-  frontend-dev:
+  # Celery worker for email reminders
+  celery-worker:
     build:
       context: .
-      target: frontend-builder
-    ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: npm run dev
+      dockerfile: Dockerfile
+    command: >
+      sh -c "cd /app/backend && 
+             celery -A services.reminder_service.celery_app worker --loglevel=info"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - REDIS_URL=redis://redis:6379/0
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - FROM_EMAIL=${FROM_EMAIL}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - study-guide-network
+    profiles:
+      - production
+
+  # Nginx reverse proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - study-guide-network
+    profiles:
+      - production
 
 volumes:
   redis_data:
+    driver: local
+
+networks:
+  study-guide-network:
+    driver: bridge

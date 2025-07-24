@@ -1,53 +1,66 @@
-# Multi-stage build for the complete application
-
-# Stage 1: Build the frontend
-FROM node:18-alpine as frontend-builder
+# Multi-stage Dockerfile for Study Guide Generator
+# Stage 1: Build Frontend
+FROM node:18-alpine AS frontend-build
 
 WORKDIR /app
 
-# Copy package files
+# Copy package files for better caching
 COPY package*.json ./
+RUN npm ci --only=production --silent
 
-# Install dependencies
-RUN npm ci --only=production
-
-# Copy source code
+# Copy source code and build
 COPY . .
-
-# Build the frontend
 RUN npm run build
 
-# Stage 2: Setup Python backend
-FROM python:3.11-slim
+# Stage 2: Python Backend with Frontend
+FROM python:3.11-slim AS production
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
 
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
-    && rm -rf /var/lib/apt/lists/*
+    g++ \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for security
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 # Copy requirements and install Python dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend/ ./backend/
 
 # Copy built frontend from previous stage
-COPY --from=frontend-builder /app/dist ./static
+COPY --from=frontend-build /app/dist ./dist
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-cd /app/backend\n\
-# Start Celery worker in background\n\
-celery -A services.reminder_service.celery_app worker --loglevel=info &\n\
-# Start FastAPI server\n\
-exec uvicorn main:app --host 0.0.0.0 --port $PORT\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# Copy startup script
+COPY start.sh ./
+RUN chmod +x start.sh
+
+# Create necessary directories and set permissions
+RUN mkdir -p /app/logs \
+    && chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:$PORT/health || exit 1
 
 # Expose port
-EXPOSE 8000
+EXPOSE $PORT
 
 # Start the application
-CMD ["/app/start.sh"]
+CMD ["./start.sh"]

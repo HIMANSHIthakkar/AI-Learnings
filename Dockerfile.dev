@@ -1,0 +1,49 @@
+# Development Dockerfile for Study Guide Generator
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8000
+
+WORKDIR /app
+
+# Install system dependencies including Node.js
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    curl \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy and install Python dependencies
+COPY backend/requirements.txt ./backend/
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r backend/requirements.txt
+
+# Copy and install Node.js dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy all source code
+COPY . .
+
+# Make scripts executable
+RUN chmod +x start.sh deploy.sh
+
+# Create development startup script
+RUN echo '#!/bin/bash\n\
+echo "🚀 Starting Development Environment..."\n\
+# Start frontend in background\n\
+npm run dev &\n\
+# Start backend\n\
+cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT --reload\n\
+' > /app/start-dev.sh && chmod +x /app/start-dev.sh
+
+# Expose ports (frontend and backend)
+EXPOSE 3000 8000
+
+# Development command
+CMD ["./start-dev.sh"]
