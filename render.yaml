@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: study-guide-generator
+    env: python
+    plan: free
+    buildCommand: "./deploy.sh"
+    startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: study-guide-redis
+      - key: PYTHON_VERSION
+        value: 3.11.0
+  
+  - type: redis
+    name: study-guide-redis
+    plan: free
